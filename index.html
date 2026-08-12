@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>MLB Stats API — Spike 測試工具</title>
+<style>
+  :root {
+    --bg: #1a1a1a;
+    --green: #0C5C0C;
+    --gold: #FFB81C;
+    --text: #ffffff;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", "Microsoft JhengHei", sans-serif;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 24px;
+    line-height: 1.6;
+  }
+  h1 { color: var(--gold); font-size: 1.4em; }
+  .desc { color: #ccc; font-size: 0.9em; margin-bottom: 20px; }
+  .controls {
+    background: #242424;
+    border: 1px solid var(--green);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 20px;
+  }
+  .controls label { display: block; margin-bottom: 8px; font-size: 0.9em; }
+  .controls input {
+    background: #111; color: var(--text); border: 1px solid #444;
+    border-radius: 4px; padding: 6px 10px; width: 220px; margin-left: 8px;
+  }
+  .step { margin-bottom: 18px; }
+  button {
+    background: var(--green); color: var(--text); border: none;
+    border-radius: 6px; padding: 10px 16px; font-size: 0.95em;
+    cursor: pointer; width: 100%; text-align: left;
+  }
+  button:hover { background: #0e7a0e; }
+  .output { margin-top: 8px; font-size: 0.85em; }
+  .url { color: var(--gold); word-break: break-all; margin-bottom: 4px; }
+  .note { padding: 6px 10px; border-radius: 4px; margin-bottom: 6px; background: #2a2a2a; }
+  .fail { color: #ff6b6b; }
+  pre {
+    background: #111; border: 1px solid #333; border-radius: 6px;
+    padding: 12px; overflow-x: auto; max-height: 340px; overflow-y: auto;
+  }
+</style>
+</head>
+<body>
+
+<h1>⚾ MLB Stats API — Spike 測試工具</h1>
+<p class="desc">
+  依序按下 Step 1～7，觀察每個請求的真實回傳結果。核心目標是 Step 6：確認 <code>vsPlayer</code> +
+  <code>opposingPlayerId</code> 能否正確回傳「打者對投手生涯對戰」資料，以及是否含有 <code>ops</code> 欄位。
+  直接用瀏覽器打開此檔案即可測試（若遇到 CORS 錯誤，改用本機簡易伺服器開啟，例如
+  <code>python -m http.server</code>，或先上傳到 GitHub Pages 測試）。
+</p>
+
+<div class="controls">
+  <label>打者姓名（建議用目前現役球員）
+    <input id="batterName" value="Aaron Judge">
+  </label>
+  <label>投手姓名（建議選跟該打者所屬球團常在同聯盟交手的球隊投手）
+    <input id="pitcherName" value="Framber Valdez">
+  </label>
+</div>
+
+<div class="step">
+  <button onclick="step1()">Step 1：確認 vsPlayer 是否為合法 statType</button>
+  <div id="out1" class="output"></div>
+</div>
+
+<div class="step">
+  <button onclick="step2()">Step 2：搜尋打者／投手 ID</button>
+  <div id="out2" class="output"></div>
+</div>
+
+<div class="step">
+  <button onclick="step3()">Step 3：打者本季成績</button>
+  <div id="out3" class="output"></div>
+</div>
+
+<div class="step">
+  <button onclick="step4()">Step 4：打者近 7 場成績（gameLog）</button>
+  <div id="out4" class="output"></div>
+</div>
+
+<div class="step">
+  <button onclick="step5()">Step 5：今日賽程與先發投手</button>
+  <div id="out5" class="output"></div>
+</div>
+
+<div class="step">
+  <button onclick="step6()">Step 6（關鍵）：打者對投手生涯對戰（vsPlayer）</button>
+  <div id="out6" class="output"></div>
+</div>
+
+<div class="step">
+  <button onclick="step7()">Step 7（邊界案例）：反向查詢 + 從未交手情境</button>
+  <div id="out7" class="output"></div>
+</div>
+
+<script>
+let batterId = null, pitcherId = null;
+const BASE = 'https://statsapi.mlb.com/api/v1';
+
+function show(id, url, data, note) {
+  const el = document.getElementById(id);
+  el.innerHTML =
+    `<div class="url">GET ${url}</div>` +
+    (note ? `<div class="note">${note}</div>` : '') +
+    `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+}
+function showError(id, url, err) {
+  document.getElementById(id).innerHTML =
+    `<div class="url">GET ${url}</div><div class="note fail">❌ 請求失敗：${err}（可能是 CORS 或網路問題，請改用本機伺服器開啟此檔案）</div>`;
+}
+
+async function step1() {
+  const url = `${BASE}/statTypes`;
+  try {
+    const data = await (await fetch(url)).json();
+    const hasVsPlayer = JSON.stringify(data).includes('vsPlayer');
+    show('out1', url, data,
+      hasVsPlayer ? '✅ 清單中找到 vsPlayer，可繼續進行後續步驟'
+                  : '⚠️ 清單中沒有 vsPlayer，需要找出正確的 statType 名稱（可能是 vsPlayer5Y 或其他變體）');
+  } catch (e) { showError('out1', url, e); }
+}
+
+async function step2() {
+  const bName = document.getElementById('batterName').value;
+  const pName = document.getElementById('pitcherName').value;
+  const bUrl = `${BASE}/people/search?query=${encodeURIComponent(bName)}`;
+  const pUrl = `${BASE}/people/search?query=${encodeURIComponent(pName)}`;
+  try {
+    const [bData, pData] = await Promise.all([
+      fetch(bUrl).then(r => r.json()),
+      fetch(pUrl).then(r => r.json())
+    ]);
+    batterId = bData.people?.[0]?.id || null;
+    pitcherId = pData.people?.[0]?.id || null;
+    show('out2', `${bUrl}\n${pUrl}`,
+      { 打者搜尋結果: bData.people?.[0], 投手搜尋結果: pData.people?.[0] },
+      (batterId && pitcherId)
+        ? `✅ 打者 ID = ${batterId}，投手 ID = ${pitcherId}，可繼續 Step 3～7`
+        : '⚠️ 有一方查無結果，請確認姓名拼字（用英文全名）');
+  } catch (e) { showError('out2', `${bUrl}｜${pUrl}`, e); }
+}
+
+async function step3() {
+  if (!batterId) { alert('請先執行 Step 2 取得打者 ID'); return; }
+  const year = new Date().getFullYear();
+  const url = `${BASE}/people/${batterId}/stats?stats=season&group=hitting&season=${year}`;
+  try {
+    const data = await (await fetch(url)).json();
+    show('out3', url, data);
+  } catch (e) { showError('out3', url, e); }
+}
+
+async function step4() {
+  if (!batterId) { alert('請先執行 Step 2 取得打者 ID'); return; }
+  const year = new Date().getFullYear();
+  const url = `${BASE}/people/${batterId}/stats?stats=gameLog&group=hitting&season=${year}`;
+  try {
+    const data = await (await fetch(url)).json();
+    const splits = data.stats?.[0]?.splits || [];
+    show('out4', url, { 本季總場次: splits.length, 最近7場: splits.slice(-7) });
+  } catch (e) { showError('out4', url, e); }
+}
+
+async function step5() {
+  const today = new Date().toISOString().slice(0, 10);
+  const url = `${BASE}/schedule?sportId=1&date=${today}&hydrate=probablePitcher,team`;
+  try {
+    const data = await (await fetch(url)).json();
+    show('out5', url, data, `今天日期：${today}（若非賽季期間可能沒有比賽，屬正常情況）`);
+  } catch (e) { showError('out5', url, e); }
+}
+
+async function step6() {
+  if (!batterId || !pitcherId) { alert('請先執行 Step 2 取得打者與投手 ID'); return; }
+  const url = `${BASE}/people/${batterId}/stats?stats=vsPlayer&opposingPlayerId=${pitcherId}&group=hitting&season=career`;
+  try {
+    const data = await (await fetch(url)).json();
+    const splits = data.stats?.[0]?.splits || [];
+    const hasOps = splits.length > 0 && splits[0].stat && ('ops' in splits[0].stat);
+    let note;
+    if (splits.length === 0) {
+      note = '⚠️ splits 是空的：可能兩人生涯真的沒交手過，建議換一組更常交手的打者/投手再測一次';
+    } else if (hasOps) {
+      note = '✅ 成功！splits[0].stat 裡有 ops 欄位，可直接用於「生涯對戰 OPS > 0.8」的判斷邏輯';
+    } else {
+      note = '⚠️ 有回傳資料但找不到 ops 欄位，展開下方 JSON 檢查實際欄位名稱（可能要自己算 OPS = OBP + SLG）';
+    }
+    show('out6', url, data, note);
+  } catch (e) { showError('out6', url, e); }
+}
+
+async function step7() {
+  if (!batterId || !pitcherId) { alert('請先執行 Step 2 取得打者與投手 ID'); return; }
+  const url = `${BASE}/people/${pitcherId}/stats?stats=vsPlayer&opposingPlayerId=${batterId}&group=pitching&season=career`;
+  try {
+    const data = await (await fetch(url)).json();
+    show('out7', url, data, '反向查詢（投手角度看這位打者），供 Phase 2 投手功能參考是否對稱可用');
+  } catch (e) { showError('out7', url, e); }
+}
+</script>
+</body>
+</html>
